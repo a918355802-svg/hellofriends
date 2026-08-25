@@ -5,8 +5,8 @@ import { Spinner } from '@/components/ui/Spinner';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { LazyImage } from '@/components/ui/LazyImage';
 import { cn } from '@/lib/cn';
-import { PRICING, BRAND } from '@/config/brand';
-import { isLikelyMobile } from '@/lib/upi';
+import { PRICING, BRAND, UPI } from '@/config/brand';
+import { buildAppUpiUri, isLikelyMobile, type UpiApp } from '@/lib/upi';
 import { INTERACTION_LABELS, usePaymentFlow } from '@/hooks/usePaymentFlow';
 import type { InteractionType } from '@/types';
 
@@ -41,7 +41,7 @@ const ASSURANCES: { icon: IconName; tone: string; text: string }[] = [
 export function PaymentSheet() {
   const {
     phase, target, order, errorMessage, recorded,
-    pay, openUpiAgain, recheck, close, reset,
+    pay, payWithApp, openUpiAgain, recheck, close, reset,
   } = usePaymentFlow();
   const navigate = useNavigate();
 
@@ -135,19 +135,48 @@ export function PaymentSheet() {
           </ul>
 
           <div className="mt-5">
-            <Button
-              size="lg"
-              fullWidth
-              onClick={pay}
-              className="h-14 min-h-[56px] bg-gradient-to-r from-brand to-accent text-[17px] tracking-tight shadow-pop"
-              leadingIcon={<Icon name="heart" size={19} />}
-            >
-              Pay {PRICING.currencySymbol}
-              {PRICING.amount} &amp; Connect
-            </Button>
+            <p className="mb-3 text-center text-[12px] font-semibold uppercase tracking-widest text-muted">
+              Pay {PRICING.currencySymbol}{PRICING.amount} with
+            </p>
+            <div className="grid grid-cols-3 gap-2.5">
+              {(
+                [
+                  { app: 'phonepe' as UpiApp, label: 'PhonePe', bg: 'bg-[#5f259f]' },
+                  { app: 'gpay' as UpiApp, label: 'GPay', bg: 'bg-[#1a73e8]' },
+                  { app: 'paytm' as UpiApp, label: 'Paytm', bg: 'bg-[#002970]' },
+                ] as const
+              ).map(({ app, label, bg }) => (
+                <button
+                  key={app}
+                  type="button"
+                  disabled={!order}
+                  onClick={() => {
+                    if (!order) { pay(); return; }
+                    payWithApp(
+                      buildAppUpiUri(
+                        {
+                          payeeVpa: UPI.payeeVpa,
+                          payeeName: UPI.payeeName,
+                          amount: order.amount,
+                          reference: order.reference,
+                          note: `${partner.name} ${interactionType}`,
+                        },
+                        app,
+                      ),
+                    );
+                  }}
+                  className={cn(
+                    'flex items-center justify-center rounded-2xl py-4 text-white shadow-card transition active:scale-95 disabled:opacity-50',
+                    bg,
+                  )}
+                >
+                  <span className="text-[14px] font-extrabold">{label}</span>
+                </button>
+              ))}
+            </div>
 
             <p className="mt-2.5 text-center text-[11px] text-muted">
-              Opens your UPI app · 100% secure ·{' '}
+              100% secure · direct UPI payment ·{' '}
               <button
                 type="button"
                 className="font-medium underline underline-offset-2"
