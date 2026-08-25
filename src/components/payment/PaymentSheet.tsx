@@ -41,7 +41,7 @@ const ASSURANCES: { icon: IconName; tone: string; text: string }[] = [
 export function PaymentSheet() {
   const {
     phase, target, order, errorMessage, recorded,
-    payWithApp, openUpiAgain, recheck, close, reset,
+    pay, payWithApp, openUpiAgain, recheck, close, reset,
   } = usePaymentFlow();
   const navigate = useNavigate();
 
