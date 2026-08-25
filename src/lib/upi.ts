@@ -69,54 +69,15 @@ export function isLikelyMobile(): boolean {
 export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
 
 /**
- * Opens the best available UPI app for the payment.
+ * Builds an app-specific UPI deep link using each app's own URL scheme.
  *
- * iOS: app-specific URL schemes (phonepe://, tez://, paytmmp://) launched from
- * Safari do not reliably complete the payment PIN flow — document.hidden timing
- * is unpredictable during app switches, so the cascade triggers multiple apps.
- * The generic upi:// URI hands off correctly on iOS.
+ * phonepe://  works on both Android and iOS for PhonePe.
+ * tez://      works on both Android and iOS for Google Pay.
+ * paytmmp://  works on both Android and iOS for Paytm.
  *
- * Android: intent:// URLs with package names open the specific app directly.
- * document.hidden becomes true once the app is in the foreground, so we can
- * detect a missing app and fall through to the next one.
- */
-export function autoOpenUpiApp(params: {
-  payeeVpa: string;
-  payeeName: string;
-  amount: number;
-  reference: string;
-  note: string;
-  fallbackUri: string;
-}): void {
-  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-  if (isIos) {
-    window.location.href = params.fallbackUri;
-    return;
-  }
-
-  // Android: try PhonePe → GPay → Paytm, fall back to generic upi://
-  const order: UpiApp[] = ['phonepe', 'gpay', 'paytm'];
-  let i = 0;
-
-  const tryNext = () => {
-    if (i >= order.length) {
-      window.location.href = params.fallbackUri;
-      return;
-    }
-    window.location.href = buildAppUpiUri(params, order[i++]);
-    setTimeout(() => {
-      if (!document.hidden) tryNext();
-    }, 700);
-  };
-
-  tryNext();
-}
-
-/**
- * Builds an app-specific UPI deep link.
- * Android uses intent:// with the app's package name so the OS opens that
- * specific app directly. iOS uses each app's custom URL scheme.
+ * Do NOT use intent:// — it redirects to Play Store when the app is absent.
+ * Do NOT use generic upi:// — iOS picks whatever handler registered last
+ * (often WhatsApp), not the app the user actually chose.
  */
 export function buildAppUpiUri(
   params: {
@@ -137,22 +98,24 @@ export function buildAppUpiUri(
     `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
   ].join('&');
 
-  const isIos = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-  if (isIos) {
-    const schemes: Record<UpiApp, string> = {
-      phonepe: `phonepe://pay?${query}`,
-      gpay: `tez://upi/pay?${query}`,
-      paytm: `paytmmp://pay?${query}`,
-    };
-    return schemes[app];
+  switch (app) {
+    case 'phonepe': return `phonepe://pay?${query}`;
+    case 'gpay':    return `tez://upi/pay?${query}`;
+    case 'paytm':   return `paytmmp://pay?${query}`;
   }
+}
 
-  const packages: Record<UpiApp, string> = {
-    phonepe: 'com.phonepe.app',
-    gpay: 'com.google.android.apps.nbu.paisa.user',
-    paytm: 'net.one97.paytm',
-  };
-
-  return `intent://pay?${query}#Intent;scheme=upi;package=${packages[app]};end`;
+/**
+ * Used only for the generic retry / "open again" flow (not the 3-button UI).
+ * Falls back to the plain upi:// URI which opens the OS picker.
+ */
+export function autoOpenUpiApp(params: {
+  payeeVpa: string;
+  payeeName: string;
+  amount: number;
+  reference: string;
+  note: string;
+  fallbackUri: string;
+}): void {
+  window.location.href = params.fallbackUri;
 }
