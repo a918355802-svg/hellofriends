@@ -1,0 +1,163 @@
+rules_version = '2';
+
+// Security model
+// --------------
+// * Exactly ONE account is the admin: the one whose sign-in email matches
+//   adminEmail() below. There is no allowlist and no role system, so no user
+//   can ever grant themselves admin access.
+// * Guests are anonymous Firebase users. They may read public partner profiles
+//   and write only their own user document, blocks, reports and payments.
+// * Partner profiles are writable ONLY by the admin.
+// * Payments are recorded by the payer and settled by the admin. There is no
+//   server in this path: money moves by UPI directly between the payer's app
+//   and the owner's bank, so nothing the client writes here decides anything.
+//   The record is a claim ("I said I would pay ₹99, reference HF…"); the admin
+//   confirms it against the actual bank credit. These rules therefore pin what
+//   a payer may claim, and reserve every verdict for the admin.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  ⚠️  SET YOUR ADMIN EMAIL HERE, then redeploy the rules:
+    //        firebase deploy --only firestore:rules
+    //
+    //  Use the exact address you created in Firebase → Authentication → Users,
+    //  in lowercase. It must match VITE_ADMIN_EMAIL.
+    //
+    //  The placeholder below is not a valid email address, so until you change
+    //  it NOBODY has admin access. That is the safe default.
+    // ─────────────────────────────────────────────────────────────────────
+    function adminEmail() {
+      return 'SET_YOUR_ADMIN_EMAIL_HERE';
+    }
+
+    // ⚠️ Must equal PRICING.amount in src/config/brand.ts. Pinned here so a
+    // tampered client cannot record a ₹1 request as if it were the real price.
+    function priceInRupees() {
+      return 99;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // `token.get('email', '')` rather than `token.email`: an anonymous guest's
+    // token has no email key at all, and reading a missing key is an evaluation
+    // error, not null. The error is contained — the payer branch of an `||`
+    // still decides those rules — but it makes every guest write log a scary
+    // PERMISSION_DENIED trace. Defaulting to '' keeps the check quiet and
+    // still matches nobody.
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.get('email', '').lower() == adminEmail();
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---------------------------------------------------------- partners
+    // Public read so the discovery feed works for anonymous guests.
+    // Inactive profiles are filtered by the query, and their existence is not
+    // sensitive; only the admin can ever change them.
+    match /partners/{partnerId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+
+      // Extra profile photos, kept out of the profile document so their bytes
+      // never load with the discovery feed. Same access as the profile itself.
+      match /media/{docId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    // ------------------------------------------------------------- users
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.get('paymentAttempts', 0) == 0
+        && request.resource.data.get('successfulPayments', 0) == 0;
+
+      // The admin may correct counters; a guest may only touch their own
+      // session fields, and may raise paymentAttempts by exactly one.
+      allow update: if isAdmin()
+        || (isOwner(userId)
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.get('successfulPayments', 0)
+                 == resource.data.get('successfulPayments', 0)
+            && (
+                 request.resource.data.get('paymentAttempts', 0)
+                   == resource.data.get('paymentAttempts', 0)
+                 || request.resource.data.get('paymentAttempts', 0)
+                      == resource.data.get('paymentAttempts', 0) + 1
+               ));
+
+      allow delete: if false;
+
+      // Private per-user block list.
+      match /blocks/{profileId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ---------------------------------------------------------- payments
+    match /payments/{paymentId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      // A payer may open a request for themselves, at the real price, and only
+      // in a not-yet-settled state.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.amount == priceInRupees()
+        && request.resource.data.currency == 'INR'
+        && request.resource.data.provider == 'upi_intent'
+        && request.resource.data.status == 'initiated'
+        && request.resource.data.reference is string
+        && request.resource.data.reference.size() >= 6
+        && request.resource.data.reference.size() <= 32
+        && request.resource.data.verifiedAt == null
+        && request.resource.data.reviewedBy == null
+        && request.resource.data.transactionId == null;
+
+      // The payer may say "I opened a UPI app" or "I backed out", and nothing
+      // else: never the amount, never who it belongs to, and never a verdict.
+      // Only the admin can mark a payment verified or failed.
+      allow update: if isAdmin()
+        || (isSignedIn()
+            && resource.data.userId == request.auth.uid
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.amount == resource.data.amount
+            && request.resource.data.reference == resource.data.reference
+            && request.resource.data.profileId == resource.data.profileId
+            && resource.data.status in ['initiated', 'pending']
+            && request.resource.data.status in ['pending', 'cancelled']
+            && request.resource.data.verifiedAt == null
+            && request.resource.data.reviewedBy == null);
+
+      allow delete: if false;
+    }
+
+    // ----------------------------------------------------------- reports
+    // Anyone signed in may file a report; only the admin may read them.
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.reason.size() <= 200
+        && request.resource.data.get('details', '').size() <= 1000
+        && request.resource.data.resolved == false;
+      allow update, delete: if isAdmin();
+    }
+
+    // Deny everything not explicitly matched above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
