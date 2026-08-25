@@ -69,6 +69,37 @@ export function isLikelyMobile(): boolean {
 export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
 
 /**
+ * Tries PhonePe → GPay → Paytm in order. Each attempt sets window.location.href
+ * to an app-specific deep link and waits 600 ms — if the page is still visible
+ * (document.hidden is false) the app was not installed, so we move to the next.
+ * Falls back to the generic upi:// URI if none of the three is installed.
+ */
+export function autoOpenUpiApp(params: {
+  payeeVpa: string;
+  payeeName: string;
+  amount: number;
+  reference: string;
+  note: string;
+  fallbackUri: string;
+}): void {
+  const order: UpiApp[] = ['phonepe', 'gpay', 'paytm'];
+  let i = 0;
+
+  const tryNext = () => {
+    if (i >= order.length) {
+      window.location.href = params.fallbackUri;
+      return;
+    }
+    window.location.href = buildAppUpiUri(params, order[i++]);
+    setTimeout(() => {
+      if (!document.hidden) tryNext();
+    }, 600);
+  };
+
+  tryNext();
+}
+
+/**
  * Builds an app-specific UPI deep link.
  * Android uses intent:// with the app's package name so the OS opens that
  * specific app directly. iOS uses each app's custom URL scheme.

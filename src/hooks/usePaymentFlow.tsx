@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { isLikelyMobile } from '@/lib/upi';
+import { autoOpenUpiApp, isLikelyMobile } from '@/lib/upi';
 import {
   cancelPayment,
   createPaymentDraft,
@@ -152,20 +152,22 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     [applyStatus, stopWatching],
   );
 
-  const launchWithUri = useCallback(
-    (draft: PaymentDraft, uri: string) => {
+  const launch = useCallback(
+    (draft: PaymentDraft) => {
       setPhase('awaiting');
       markPaymentAttempted(draft.paymentId);
       watchPayment(draft.paymentId);
       if (!isLikelyMobile()) return;
-      window.location.href = uri;
+      autoOpenUpiApp({
+        payeeVpa: draft.payeeVpa,
+        payeeName: draft.payeeName,
+        amount: draft.amount,
+        reference: draft.reference,
+        note: draft.note,
+        fallbackUri: draft.upiUri,
+      });
     },
     [watchPayment],
-  );
-
-  const launch = useCallback(
-    (draft: PaymentDraft) => launchWithUri(draft, draft.upiUri),
-    [launchWithUri],
   );
 
   /**
@@ -246,20 +248,10 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
   }, [target, order, phase, launch, prepare]);
 
   const payWithApp = useCallback(
-    (appUri: string) => {
-      if (!target) return;
-      const reusable =
-        phase === 'sheet' || phase === 'awaiting' || phase === 'pending' ? order : null;
-      const draft = reusable ?? prepare(target.partner, target.interactionType);
-      if (!draft) {
-        setErrorMessage('Your session is still starting. Please try again in a moment.');
-        setPhase('failed');
-        return;
-      }
-      setErrorMessage(null);
-      launchWithUri(draft, appUri);
+    (_appUri: string) => {
+      pay();
     },
-    [target, order, phase, prepare, launchWithUri],
+    [pay],
   );
 
   const openUpiAgain = useCallback(() => {

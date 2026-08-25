@@ -106,6 +106,7 @@ export interface PaymentDraft {
   upiUri: string;
   payeeVpa: string;
   payeeName: string;
+  note: string;
 }
 
 /**
