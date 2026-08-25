@@ -78,6 +78,8 @@ interface PaymentFlowValue {
   open: (partner: Partner, interactionType: InteractionType) => void;
   /** Hands off to the user's UPI apps with ₹99 pre-filled. */
   pay: () => void;
+  /** Opens a specific UPI app (PhonePe / GPay / Paytm) with ₹99 pre-filled. */
+  payWithApp: (appUri: string) => void;
   /** Re-opens the phone's UPI picker for the same payment. */
   openUpiAgain: () => void;
   /** Manual "I have paid" re-check. */
@@ -150,25 +152,20 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     [applyStatus, stopWatching],
   );
 
-  /**
-   * Hands the payment to the phone.
-   *
-   * Nothing here chooses an app. The bare `upi://pay?…` URI goes to the
-   * operating system, which shows whichever UPI apps are actually installed.
-   */
-  const launch = useCallback(
-    (draft: PaymentDraft) => {
+  const launchWithUri = useCallback(
+    (draft: PaymentDraft, uri: string) => {
       setPhase('awaiting');
       markPaymentAttempted(draft.paymentId);
       watchPayment(draft.paymentId);
-
-      // Desktop has no UPI app; attempting the scheme only logs an error. The
-      // payee details shown on screen are the useful path there.
       if (!isLikelyMobile()) return;
-
-      window.location.href = draft.upiUri;
+      window.location.href = uri;
     },
     [watchPayment],
+  );
+
+  const launch = useCallback(
+    (draft: PaymentDraft) => launchWithUri(draft, draft.upiUri),
+    [launchWithUri],
   );
 
   /**
@@ -248,6 +245,23 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     launch(draft);
   }, [target, order, phase, launch, prepare]);
 
+  const payWithApp = useCallback(
+    (appUri: string) => {
+      if (!target) return;
+      const reusable =
+        phase === 'sheet' || phase === 'awaiting' || phase === 'pending' ? order : null;
+      const draft = reusable ?? prepare(target.partner, target.interactionType);
+      if (!draft) {
+        setErrorMessage('Your session is still starting. Please try again in a moment.');
+        setPhase('failed');
+        return;
+      }
+      setErrorMessage(null);
+      launchWithUri(draft, appUri);
+    },
+    [target, order, phase, prepare, launchWithUri],
+  );
+
   const openUpiAgain = useCallback(() => {
     if (!order) return;
     launch(order);
@@ -311,6 +325,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       recorded,
       open,
       pay,
+      payWithApp,
       openUpiAgain,
       recheck,
       close,
@@ -324,6 +339,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       recorded,
       open,
       pay,
+      payWithApp,
       openUpiAgain,
       recheck,
       close,

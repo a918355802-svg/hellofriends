@@ -147,7 +147,7 @@ export function PaymentSheet() {
             </Button>
 
             <p className="mt-2.5 text-center text-[11px] text-muted">
-              Opens your own UPI app · 100% secure ·{' '}
+              Opens your UPI app · 100% secure ·{' '}
               <button
                 type="button"
                 className="font-medium underline underline-offset-2"

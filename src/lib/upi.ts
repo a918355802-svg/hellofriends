@@ -65,3 +65,49 @@ export function isLikelyMobile(): boolean {
   if (typeof navigator === 'undefined') return false;
   return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 }
+
+export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
+
+/**
+ * Builds an app-specific UPI deep link.
+ * Android uses intent:// with the app's package name so the OS opens that
+ * specific app directly. iOS uses each app's custom URL scheme.
+ */
+export function buildAppUpiUri(
+  params: {
+    payeeVpa: string;
+    payeeName: string;
+    amount: number;
+    reference: string;
+    note: string;
+  },
+  app: UpiApp,
+): string {
+  const query = [
+    `pa=${params.payeeVpa}`,
+    `pn=${encodeURIComponent(params.payeeName)}`,
+    `am=${params.amount.toFixed(2)}`,
+    `cu=INR`,
+    `tr=${params.reference}`,
+    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
+  ].join('&');
+
+  const isIos = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+  if (isIos) {
+    const schemes: Record<UpiApp, string> = {
+      phonepe: `phonepe://pay?${query}`,
+      gpay: `tez://upi/pay?${query}`,
+      paytm: `paytmmp://pay?${query}`,
+    };
+    return schemes[app];
+  }
+
+  const packages: Record<UpiApp, string> = {
+    phonepe: 'com.phonepe.app',
+    gpay: 'com.google.android.apps.nbu.paisa.user',
+    paytm: 'net.one97.paytm',
+  };
+
+  return `intent://pay?${query}#Intent;scheme=upi;package=${packages[app]};end`;
+}
