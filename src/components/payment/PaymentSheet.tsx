@@ -6,7 +6,7 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { LazyImage } from '@/components/ui/LazyImage';
 import { cn } from '@/lib/cn';
 import { PRICING, BRAND } from '@/config/brand';
-import { buildAppUpiUri, isLikelyMobile, type UpiApp } from '@/lib/upi';
+import { isLikelyMobile, type UpiApp } from '@/lib/upi';
 import { INTERACTION_LABELS, usePaymentFlow } from '@/hooks/usePaymentFlow';
 import type { InteractionType } from '@/types';
 
@@ -149,18 +149,8 @@ export function PaymentSheet() {
                 <button
                   key={id}
                   type="button"
-                  disabled={!order}
-                  onClick={() => {
-                    if (!order) return;
-                    payWithApp(buildAppUpiUri({
-                      payeeVpa: order.payeeVpa,
-                      payeeName: order.payeeName,
-                      amount: order.amount,
-                      reference: order.reference,
-                      note: order.note,
-                    }, id));
-                  }}
-                  className="flex flex-col items-center gap-2 rounded-2xl bg-elevated py-4 ring-1 ring-line transition active:scale-95 hover:ring-brand/40 disabled:opacity-50"
+                  onClick={() => payWithApp(id)}
+                  className="flex flex-col items-center gap-2 rounded-2xl bg-elevated py-4 ring-1 ring-line transition active:scale-95 hover:ring-brand/40"
                 >
                   {logo}
                   <span className="text-[12px] font-bold">{label}</span>
@@ -210,6 +200,10 @@ export function PaymentSheet() {
                     {PRICING.currencySymbol}
                     {PRICING.amount}
                   </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted">UPI ID</dt>
+                  <dd className="font-mono text-xs">{order.payeeVpa}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-muted">Reference</dt>

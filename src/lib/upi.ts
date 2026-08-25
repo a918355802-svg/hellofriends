@@ -1,22 +1,15 @@
 /**
  * UPI deep links.
  *
- * There is exactly one way out of this app and into a payment app: the plain
- * `upi://pay?…` URI. Android and iOS both treat that as "someone wants to make
- * a UPI payment" and show the device's own list of whatever UPI apps are
- * installed — PhonePe, Paytm, Google Pay, WhatsApp, the bank's own app,
- * anything. One installed app opens straight away; several, and the phone puts
- * up its own picker.
+ * Two ways out of this app and into a payment app:
  *
- * This app deliberately shows no app picker of its own. A browser is not
- * allowed to ask the operating system which apps exist, so any list drawn in
- * HTML would be a guess — and naming a package that is not installed dead-ends
- * on an error page. Handing the URI to the OS cannot pick the wrong app,
- * because the OS is the only party that actually knows.
+ *   1. A plain `upi://pay?…` URI. Android and iOS both treat that as "someone
+ *      wants to make a UPI payment" and show the device's own list of whatever
+ *      UPI apps are installed. Used for the generic retry affordance.
  *
- * The flip side, and it cannot be worked around from a web page: the contents
- * of that picker belong to the phone. If WhatsApp is registered as a UPI
- * handler it will be listed, and no parameter in the URI can hide it.
+ *   2. An app-specific scheme — `phonepe://`, `tez://`, `paytmmp://` — used by
+ *      the three buttons on the sheet, so tapping PhonePe opens PhonePe and
+ *      not whatever handler the OS happened to rank first.
  *
  * IMPORTANT: none of this reports an outcome. A UPI app never calls the browser
  * back, so opening one tells us only that the user left. Settlement is
@@ -24,12 +17,31 @@
  */
 
 /**
- * Builds a `upi://pay` URI.
+ * Assembles the shared UPI query string.
  *
- * The query is assembled by hand rather than with `URLSearchParams`, which
- * would percent-encode the `@` in the VPA. Several UPI apps reject that, so
- * `pa` is written literally and only the free-text fields are encoded.
+ * Built by hand rather than with `URLSearchParams`, which would percent-encode
+ * the `@` in the VPA. Several UPI apps reject that, so `pa` is written
+ * literally and only the free-text fields are encoded.
  */
+function upiQuery(params: {
+  payeeVpa: string;
+  payeeName: string;
+  amount: number;
+  reference: string;
+  note: string;
+  currency?: string;
+}): string {
+  return [
+    `pa=${params.payeeVpa}`,
+    `pn=${encodeURIComponent(params.payeeName)}`,
+    `am=${params.amount.toFixed(2)}`,
+    `cu=${params.currency ?? 'INR'}`,
+    `tr=${params.reference}`,
+    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
+  ].join('&');
+}
+
+/** Builds a `upi://pay` URI — the one the OS picker resolves. */
 export function buildUpiUri(params: {
   payeeVpa: string;
   payeeName: string;
@@ -38,15 +50,7 @@ export function buildUpiUri(params: {
   note: string;
   currency?: string;
 }): string {
-  const fields = [
-    `pa=${params.payeeVpa}`,
-    `pn=${encodeURIComponent(params.payeeName)}`,
-    `am=${params.amount.toFixed(2)}`,
-    `cu=${params.currency ?? 'INR'}`,
-    `tr=${params.reference}`,
-    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
-  ];
-  return `upi://pay?${fields.join('&')}`;
+  return `upi://pay?${upiQuery(params)}`;
 }
 
 /**
@@ -75,9 +79,12 @@ export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
  * tez://      works on both Android and iOS for Google Pay.
  * paytmmp://  works on both Android and iOS for Paytm.
  *
- * Do NOT use intent:// — it redirects to Play Store when the app is absent.
- * Do NOT use generic upi:// — iOS picks whatever handler registered last
- * (often WhatsApp), not the app the user actually chose.
+ * Do NOT use intent:// — it redirects to the Play Store when the app is absent,
+ * which throws away the open sheet along with the reference on it. A custom
+ * scheme that nothing handles simply does nothing, and the sheet survives.
+ *
+ * Do NOT use generic upi:// here — the OS picks whatever handler registered
+ * last (often WhatsApp), not the app the user actually tapped.
  */
 export function buildAppUpiUri(
   params: {
@@ -89,14 +96,7 @@ export function buildAppUpiUri(
   },
   app: UpiApp,
 ): string {
-  const query = [
-    `pa=${params.payeeVpa}`,
-    `pn=${encodeURIComponent(params.payeeName)}`,
-    `am=${params.amount.toFixed(2)}`,
-    `cu=INR`,
-    `tr=${params.reference}`,
-    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
-  ].join('&');
+  const query = upiQuery(params);
 
   switch (app) {
     case 'phonepe': return `phonepe://pay?${query}`;
@@ -106,16 +106,16 @@ export function buildAppUpiUri(
 }
 
 /**
- * Used only for the generic retry / "open again" flow (not the 3-button UI).
- * Falls back to the plain upi:// URI which opens the OS picker.
+ * Hands a UPI URI to the operating system.
+ *
+ * Must be called synchronously from inside the tap that asked for it: browsers
+ * only honour a navigation to a custom scheme while the user gesture is still
+ * live. Anything awaited beforehand — a Firestore write, a state flush — and
+ * the redirect is silently dropped.
+ *
+ * A no-op off mobile, where no UPI app exists to receive it.
  */
-export function autoOpenUpiApp(params: {
-  payeeVpa: string;
-  payeeName: string;
-  amount: number;
-  reference: string;
-  note: string;
-  fallbackUri: string;
-}): void {
-  window.location.href = params.fallbackUri;
+export function openUpiUri(uri: string): void {
+  if (!isLikelyMobile()) return;
+  window.location.href = uri;
 }

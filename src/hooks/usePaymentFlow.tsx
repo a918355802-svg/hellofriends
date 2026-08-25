@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { autoOpenUpiApp, isLikelyMobile } from '@/lib/upi';
+import { buildAppUpiUri, openUpiUri, type UpiApp } from '@/lib/upi';
 import {
   cancelPayment,
   createPaymentDraft,
@@ -40,10 +40,10 @@ import { useGuestSession } from './useGuestSession';
  *    alongside it — and if that write fails the user still reaches their UPI
  *    app with a reference to quote.
  *
- * Pay hands the phone a plain `upi://pay?…` link and lets the operating system
- * take over: one UPI app installed and it opens straight away, several and the
- * phone shows its own picker. This app never draws a picker of its own — see
- * `src/lib/upi.ts` for why a browser cannot honestly build one.
+ * The sheet's three buttons each hand the phone that app's own scheme —
+ * `phonepe://`, `tez://`, `paytmmp://` — so tapping PhonePe opens PhonePe. The
+ * retry affordance falls back to the plain `upi://pay?…` link, which lets the
+ * operating system show its own picker of everything actually installed.
  *
  * The record is created when the sheet opens, not when Pay is tapped, so it has
  * a few seconds of a live tab to reach the server. The `initiated → pending`
@@ -79,7 +79,7 @@ interface PaymentFlowValue {
   /** Hands off to the user's UPI apps with ₹99 pre-filled. */
   pay: () => void;
   /** Opens a specific UPI app (PhonePe / GPay / Paytm) with ₹99 pre-filled. */
-  payWithApp: (appUri: string) => void;
+  payWithApp: (app: UpiApp) => void;
   /** Re-opens the phone's UPI picker for the same payment. */
   openUpiAgain: () => void;
   /** Manual "I have paid" re-check. */
@@ -152,20 +152,37 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     [applyStatus, stopWatching],
   );
 
+  /**
+   * Hands the phone off to a UPI app.
+   *
+   * `app` names one of the three buttons on the sheet and produces that app's
+   * own scheme; without it the plain `upi://` link goes out and the OS shows
+   * its own picker (the retry affordance).
+   *
+   * The redirect is the very first statement on purpose. A browser only honours
+   * a navigation to a custom scheme while the tap that triggered it is still
+   * live, so no Firestore write and no state update may run ahead of it.
+   */
   const launch = useCallback(
-    (draft: PaymentDraft) => {
+    (draft: PaymentDraft, app?: UpiApp) => {
+      openUpiUri(
+        app
+          ? buildAppUpiUri(
+              {
+                payeeVpa: draft.payeeVpa,
+                payeeName: draft.payeeName,
+                amount: draft.amount,
+                reference: draft.reference,
+                note: draft.note,
+              },
+              app,
+            )
+          : draft.upiUri,
+      );
+
       setPhase('awaiting');
       markPaymentAttempted(draft.paymentId);
       watchPayment(draft.paymentId);
-      if (!isLikelyMobile()) return;
-      autoOpenUpiApp({
-        payeeVpa: draft.payeeVpa,
-        payeeName: draft.payeeName,
-        amount: draft.amount,
-        reference: draft.reference,
-        note: draft.note,
-        fallbackUri: draft.upiUri,
-      });
     },
     [watchPayment],
   );
@@ -224,35 +241,42 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     reset();
   }, [order, phase, reset]);
 
-  const pay = useCallback(() => {
-    if (!target) return;
+  /**
+   * Shared entry point behind every pay button.
+   *
+   * Everything here is synchronous, so the redirect inside `launch` stays
+   * within the user's tap — the only way a browser will open a custom scheme.
+   */
+  const start = useCallback(
+    (app?: UpiApp) => {
+      if (!target) return;
 
-    // A record the owner has already ruled on is closed for good: the rules let
-    // a payer move a request out of `initiated`/`pending` and nowhere else. So
-    // retrying after a verdict has to open a fresh request, or the very first
-    // write would be rejected and the sheet would snap back to failed.
-    const reusable =
-      phase === 'sheet' || phase === 'awaiting' || phase === 'pending' ? order : null;
+      // A record the owner has already ruled on is closed for good: the rules
+      // let a payer move a request out of `initiated`/`pending` and nowhere
+      // else. So retrying after a verdict has to open a fresh request, or the
+      // very first write would be rejected and the sheet would snap to failed.
+      const reusable =
+        phase === 'sheet' || phase === 'awaiting' || phase === 'pending' ? order : null;
 
-    // Always synchronous, so the redirect stays inside the user's tap — which
-    // is the only way a browser will open a custom scheme.
-    const draft = reusable ?? prepare(target.partner, target.interactionType);
-    if (!draft) {
-      setErrorMessage('Your session is still starting. Please try again in a moment.');
-      setPhase('failed');
-      return;
-    }
+      // The sheet prepares a draft as it opens, but the session may still have
+      // been starting then. Preparing again here keeps the buttons live rather
+      // than leaving them dead on a tap that produced nothing.
+      const draft = reusable ?? prepare(target.partner, target.interactionType);
+      if (!draft) {
+        setErrorMessage('Your session is still starting. Please try again in a moment.');
+        setPhase('failed');
+        return;
+      }
 
-    setErrorMessage(null);
-    launch(draft);
-  }, [target, order, phase, launch, prepare]);
-
-  const payWithApp = useCallback(
-    (_appUri: string) => {
-      pay();
+      setErrorMessage(null);
+      launch(draft, app);
     },
-    [pay],
+    [target, order, phase, launch, prepare],
   );
+
+  const pay = useCallback(() => start(), [start]);
+
+  const payWithApp = useCallback((app: UpiApp) => start(app), [start]);
 
   const openUpiAgain = useCallback(() => {
     if (!order) return;
