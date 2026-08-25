@@ -69,10 +69,16 @@ export function isLikelyMobile(): boolean {
 export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
 
 /**
- * Tries PhonePe → GPay → Paytm in order. Each attempt sets window.location.href
- * to an app-specific deep link and waits 600 ms — if the page is still visible
- * (document.hidden is false) the app was not installed, so we move to the next.
- * Falls back to the generic upi:// URI if none of the three is installed.
+ * Opens the best available UPI app for the payment.
+ *
+ * iOS: app-specific URL schemes (phonepe://, tez://, paytmmp://) launched from
+ * Safari do not reliably complete the payment PIN flow — document.hidden timing
+ * is unpredictable during app switches, so the cascade triggers multiple apps.
+ * The generic upi:// URI hands off correctly on iOS.
+ *
+ * Android: intent:// URLs with package names open the specific app directly.
+ * document.hidden becomes true once the app is in the foreground, so we can
+ * detect a missing app and fall through to the next one.
  */
 export function autoOpenUpiApp(params: {
   payeeVpa: string;
@@ -82,6 +88,14 @@ export function autoOpenUpiApp(params: {
   note: string;
   fallbackUri: string;
 }): void {
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+  if (isIos) {
+    window.location.href = params.fallbackUri;
+    return;
+  }
+
+  // Android: try PhonePe → GPay → Paytm, fall back to generic upi://
   const order: UpiApp[] = ['phonepe', 'gpay', 'paytm'];
   let i = 0;
 
@@ -93,7 +107,7 @@ export function autoOpenUpiApp(params: {
     window.location.href = buildAppUpiUri(params, order[i++]);
     setTimeout(() => {
       if (!document.hidden) tryNext();
-    }, 600);
+    }, 700);
   };
 
   tryNext();
