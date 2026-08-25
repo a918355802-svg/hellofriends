@@ -6,7 +6,7 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { LazyImage } from '@/components/ui/LazyImage';
 import { cn } from '@/lib/cn';
 import { PRICING, BRAND } from '@/config/brand';
-import { isLikelyMobile } from '@/lib/upi';
+import { buildAppUpiUri, isLikelyMobile, type UpiApp } from '@/lib/upi';
 import { INTERACTION_LABELS, usePaymentFlow } from '@/hooks/usePaymentFlow';
 import type { InteractionType } from '@/types';
 
@@ -41,7 +41,7 @@ const ASSURANCES: { icon: IconName; tone: string; text: string }[] = [
 export function PaymentSheet() {
   const {
     phase, target, order, errorMessage, recorded,
-    pay, openUpiAgain, recheck, close, reset,
+    payWithApp, openUpiAgain, recheck, close, reset,
   } = usePaymentFlow();
   const navigate = useNavigate();
 
@@ -135,26 +135,45 @@ export function PaymentSheet() {
           </ul>
 
           <div className="mt-5">
-            <Button
-              size="lg"
-              fullWidth
-              onClick={pay}
-              className="h-14 min-h-[56px] bg-gradient-to-r from-brand to-accent text-[17px] tracking-tight shadow-pop"
-              leadingIcon={<Icon name="heart" size={19} />}
-            >
-              Pay {PRICING.currencySymbol}
-              {PRICING.amount} &amp; Connect
-            </Button>
+            <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
+              Pay {PRICING.currencySymbol}{PRICING.amount} with
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              {(
+                [
+                  { id: 'phonepe' as UpiApp, label: 'PhonePe', logo: <PhonePeLogo /> },
+                  { id: 'gpay' as UpiApp, label: 'GPay', logo: <GPayLogo /> },
+                  { id: 'paytm' as UpiApp, label: 'Paytm', logo: <PaytmLogo /> },
+                ]
+              ).map(({ id, label, logo }) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={!order}
+                  onClick={() => {
+                    if (!order) return;
+                    payWithApp(buildAppUpiUri({
+                      payeeVpa: order.payeeVpa,
+                      payeeName: order.payeeName,
+                      amount: order.amount,
+                      reference: order.reference,
+                      note: order.note,
+                    }, id));
+                  }}
+                  className="flex flex-col items-center gap-2 rounded-2xl bg-elevated py-4 ring-1 ring-line transition active:scale-95 hover:ring-brand/40 disabled:opacity-50"
+                >
+                  {logo}
+                  <span className="text-[12px] font-bold">{label}</span>
+                </button>
+              ))}
+            </div>
 
-            <p className="mt-2.5 text-center text-[11px] text-muted">
-              Opens your UPI app · 100% secure ·{' '}
+            <p className="mt-3 text-center text-[11px] text-muted">
+              100% secure · UPI direct ·{' '}
               <button
                 type="button"
                 className="font-medium underline underline-offset-2"
-                onClick={() => {
-                  reset();
-                  navigate('/legal/refunds');
-                }}
+                onClick={() => { reset(); navigate('/legal/refunds'); }}
               >
                 Refund policy
               </button>
@@ -354,6 +373,36 @@ export function PaymentSheet() {
         </div>
       )}
     </Sheet>
+  );
+}
+
+function PhonePeLogo() {
+  return (
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="12" fill="#5f259f" />
+      <path d="M14 11h13c4.97 0 9 4.03 9 9s-4.03 9-9 9h-6v8h-7V11zm7 12h6a3 3 0 000-6h-6v6z" fill="white" />
+    </svg>
+  );
+}
+
+function GPayLogo() {
+  return (
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="12" fill="white" stroke="#e2e8f0" strokeWidth="1.5" />
+      <path d="M35.6 24.6c0-1-.1-2-.3-2.9H24v5.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.9c2.3-2.1 3.6-5.2 3.6-9z" fill="#4285F4" />
+      <path d="M24 37c3.2 0 5.9-1.1 7.9-2.9l-3.9-2.9c-1.1.7-2.5 1.1-4 1.1-3.1 0-5.7-2-6.6-4.8h-4v3C15.4 34.5 19.4 37 24 37z" fill="#34A853" />
+      <path d="M17.4 27.5c-.2-.7-.4-1.5-.4-2.5s.1-1.8.4-2.5v-3h-4c-.8 1.7-1.4 3.5-1.4 5.5s.5 3.8 1.4 5.5l4-3z" fill="#FBBC04" />
+      <path d="M24 17.2c1.8 0 3.4.6 4.6 1.8l3.4-3.4C30 13.7 27.2 12.5 24 12.5c-4.6 0-8.6 2.5-10.6 6.5l4 3c.9-2.8 3.5-4.8 6.6-4.8z" fill="#EA4335" />
+    </svg>
+  );
+}
+
+function PaytmLogo() {
+  return (
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="12" fill="#00BAF2" />
+      <path d="M13 12h13c4.4 0 8 3.6 8 8s-3.6 8-8 8h-5v8h-8V12zm8 10h5a2 2 0 000-4h-5v4z" fill="white" />
+    </svg>
   );
 }
 
