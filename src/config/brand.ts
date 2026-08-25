@@ -51,7 +51,7 @@ export const PRICING = {
  * the money elsewhere or change the price.
  */
 export const UPI = {
-  payeeVpa: import.meta.env.VITE_UPI_PAYEE_VPA || '6395190674-f522-2.wallet@phonepe',
+  payeeVpa: import.meta.env.VITE_UPI_PAYEE_VPA || 'navneetyadav8070@okicici',
   payeeName: import.meta.env.VITE_UPI_PAYEE_NAME || BRAND.name,
 } as const;
 
