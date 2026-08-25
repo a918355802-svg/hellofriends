@@ -5,7 +5,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { LazyImage } from '@/components/ui/LazyImage';
 import { cn } from '@/lib/cn';
-import { PRICING, BRAND, UPI } from '@/config/brand';
+import { PRICING, BRAND } from '@/config/brand';
 import { isLikelyMobile } from '@/lib/upi';
 import { INTERACTION_LABELS, usePaymentFlow } from '@/hooks/usePaymentFlow';
 import type { InteractionType } from '@/types';
