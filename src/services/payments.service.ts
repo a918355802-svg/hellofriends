@@ -72,9 +72,14 @@ export function createPaymentDraft(params: {
     payeeVpa: UPI.payeeVpa,
     payeeName,
     note,
+    // The QR's copy: a stable reference is right here, because a QR is
+    // rendered once and scanned once.
     upiUri: buildUpiUri({
       payeeVpa: UPI.payeeVpa,
+      payeeName,
       amount: PRICING.amount,
+      reference,
+      note,
     }),
   };
 

@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { buildAppUpiUri, openUpiUri, type UpiApp } from '@/lib/upi';
+import { attemptReference, buildAppUpiUri, buildUpiUri, openUpiUri, type UpiApp } from '@/lib/upi';
 import {
   cancelPayment,
   createPaymentDraft,
@@ -117,6 +117,10 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
   const unsubscribeStatus = useRef<(() => void) | null>(null);
   const mounted = useRef(true);
 
+  // UPI wants a fresh `tr` for every attempt at the same request; replaying one
+  // is among the things an app reports back as a bogus "limit exceeded".
+  const attempt = useRef(0);
+
   // Read by the visibility listener, which is registered once and must not go
   // stale between renders.
   const orderRef = useRef<PaymentDraft | null>(null);
@@ -219,6 +223,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       setRecorded(false);
       setTarget({ partner, interactionType });
       setPhase('sheet');
+      attempt.current = 0;
       prepare(partner, interactionType);
     },
     [stopWatching, prepare],
@@ -272,14 +277,20 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
 
       setErrorMessage(null);
 
+      attempt.current += 1;
+      const fields = {
+        payeeVpa: draft.payeeVpa,
+        payeeName: draft.payeeName,
+        amount: draft.amount,
+        reference: attemptReference(draft.reference, attempt.current),
+        note: draft.note,
+      };
+
       const uri =
         handoff.kind === 'app'
-          ? buildAppUpiUri(
-              { payeeVpa: draft.payeeVpa, amount: draft.amount },
-              handoff.app,
-            )
+          ? buildAppUpiUri(fields, handoff.app)
           : handoff.kind === 'picker'
-            ? draft.upiUri
+            ? buildUpiUri(fields)
             : null;
 
       launch(draft, uri);
@@ -295,7 +306,17 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
 
   const openUpiAgain = useCallback(() => {
     if (!order) return;
-    launch(order, order.upiUri);
+    attempt.current += 1;
+    launch(
+      order,
+      buildUpiUri({
+        payeeVpa: order.payeeVpa,
+        payeeName: order.payeeName,
+        amount: order.amount,
+        reference: attemptReference(order.reference, attempt.current),
+        note: order.note,
+      }),
+    );
   }, [order, launch]);
 
   const recheck = useCallback(() => {

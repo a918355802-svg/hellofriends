@@ -19,40 +19,80 @@
 /**
  * Assembles the shared UPI query string.
  *
- * Two fields: who is being paid, and how much. Nothing else — no payee name,
- * no currency, no note, no reference. The payer's app resolves the account
- * holder's name from the VPA itself and defaults the currency to INR, so both
- * are noise, and every extra field is one more thing for an app to object to.
+ * The full set, in the order the spec lists them: payee, payee name, a unique
+ * transaction reference, a note, the amount, the currency.
+ *
+ * Two of these are load-bearing in a way that is easy to get wrong, and both
+ * of them surface as a *"limit exceeded"* rather than as a parse error, on
+ * amounts nowhere near any real limit:
+ *
+ *   - `am` must be a two-decimal string. An app handed a bare `99` can fail to
+ *     parse it, and some fall back to a maximum-threshold exception instead of
+ *     reporting the real problem.
+ *   - `tr` must be present and unique per attempt. Dropping it, or replaying
+ *     the same one, trips the same fallback.
+ *
+ * `mc` is deliberately absent: it declares a merchant category, and this pays
+ * a personal VPA. Claiming a merchant code the account does not have invites a
+ * rejection of its own.
  *
  * Built by hand rather than with `URLSearchParams`, which would percent-encode
- * the `@` in the VPA. Several UPI apps reject that outright.
- *
- * Worth being clear about what this does NOT fix: the apps refuse a
- * third-party intent collecting into a personal VPA and report it back as a
- * generic "check limit". That is a decision made on the bank's side about the
- * account, not about the link, and no arrangement of these fields reaches it.
- * `tr` and `tn` were each dropped in turn against the same error. The QR and
- * the copyable UPI ID on the sheet are what actually complete a payment.
+ * the `@` in the VPA. Several UPI apps reject that outright, so `pa` is written
+ * literally and every free-text field is encoded.
  */
-function upiQuery(params: { payeeVpa: string; amount: number }): string {
-  return [`pa=${params.payeeVpa}`, `am=${params.amount.toFixed(2)}`].join('&');
+function upiQuery(params: {
+  payeeVpa: string;
+  payeeName: string;
+  amount: number;
+  reference: string;
+  note: string;
+  currency?: string;
+}): string {
+  return [
+    `pa=${params.payeeVpa}`,
+    `pn=${encodeURIComponent(params.payeeName)}`,
+    `tr=${encodeURIComponent(params.reference)}`,
+    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
+    `am=${params.amount.toFixed(2)}`,
+    `cu=${params.currency ?? 'INR'}`,
+  ].join('&');
 }
 
 /** Builds a `upi://pay` URI — the one the OS picker resolves. */
-export function buildUpiUri(params: { payeeVpa: string; amount: number }): string {
+export function buildUpiUri(params: {
+  payeeVpa: string;
+  payeeName: string;
+  amount: number;
+  reference: string;
+  note: string;
+  currency?: string;
+}): string {
   return `upi://pay?${upiQuery(params)}`;
 }
 
 /**
  * A short human-quotable reference, e.g. `HF1A2B3C4DWXYZ`. It identifies the
- * request on screen, in Firestore and to support. It is deliberately NOT put
- * into the UPI intent — see `upiQuery` — so it never reaches the bank
- * statement.
+ * request on screen, in Firestore and to support, and it is the stem of the
+ * `tr` sent to the UPI app — see `attemptReference`, which makes each attempt
+ * its own.
  */
 export function makeReference(): string {
   const stamp = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `HF${stamp}${random}`;
+}
+
+/**
+ * A `tr` for one attempt at paying one request.
+ *
+ * UPI wants the transaction reference to be unique per attempt: replaying the
+ * one from a previous try is among the things that come back as a bogus "limit
+ * exceeded". Suffixing the request's own reference keeps both properties — the
+ * value is new every time, and it still starts with the reference the owner
+ * sees in the dashboard, so a bank narration can be traced back to a row.
+ */
+export function attemptReference(reference: string, attempt: number): string {
+  return `${reference}${String(attempt).padStart(2, '0')}`;
 }
 
 /** UPI links only resolve on a phone; desktop users have to pay manually. */
@@ -78,7 +118,13 @@ export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
  * last (often WhatsApp), not the app the user actually tapped.
  */
 export function buildAppUpiUri(
-  params: { payeeVpa: string; amount: number },
+  params: {
+    payeeVpa: string;
+    payeeName: string;
+    amount: number;
+    reference: string;
+    note: string;
+  },
   app: UpiApp,
 ): string {
   const query = upiQuery(params);
