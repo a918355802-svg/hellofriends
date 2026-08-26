@@ -8,7 +8,7 @@ import { LazyImage } from '@/components/ui/LazyImage';
 import { UpiQr } from '@/components/payment/UpiQr';
 import { cn } from '@/lib/cn';
 import { PRICING, BRAND } from '@/config/brand';
-import { isLikelyMobile, type UpiApp } from '@/lib/upi';
+import { isLikelyMobile } from '@/lib/upi';
 import { INTERACTION_LABELS, usePaymentFlow } from '@/hooks/usePaymentFlow';
 import type { InteractionType } from '@/types';
 
@@ -43,7 +43,7 @@ const ASSURANCES: { icon: IconName; tone: string; text: string }[] = [
 export function PaymentSheet() {
   const {
     phase, target, order, errorMessage, recorded,
-    pay, payWithApp, payManually, openUpiAgain, recheck, close, reset,
+    payManually, retry, recheck, close, reset,
   } = usePaymentFlow();
   const navigate = useNavigate();
 
@@ -137,14 +137,12 @@ export function PaymentSheet() {
           </ul>
 
           <div className="mt-5">
-            {/* The QR leads because it is the only path confirmed to complete.
-                The deep links were tried against five payload variations, two
-                payer phones and two bank handles, and were refused every time
-                — an app declines a third-party intent collecting into a
-                personal VPA and reports it back as a generic "check limit".
-                A QR carries the same URI but never touches the OS: the payer
-                scans it inside their own app, where it is an ordinary scan.
-                The steps below are the ones that were walked end to end. */}
+            {/* The QR is the whole path. Deep links into PhonePe, GPay and
+                Paytm were tried against five payload variations, two payer
+                phones and two bank handles and were refused every time — an
+                app declines a third-party intent collecting into a personal
+                VPA. They are gone rather than demoted: a button that reliably
+                errors teaches payers the site is broken. */}
             {order && (
               <>
                 <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
@@ -185,39 +183,9 @@ export function PaymentSheet() {
                   </div>
                 </div>
 
-                <div className="mt-3">
-                  <Button size="lg" fullWidth onClick={payManually}>
-                    I have paid {PRICING.currencySymbol}{PRICING.amount}
-                  </Button>
-                </div>
+                <TransactionIdForm onSubmit={payManually} />
               </>
             )}
-
-            {/* Kept for the payer whose app does take the intent — it is one
-                tap when it works. Labelled honestly, because on every device
-                tested so far it has not. */}
-            <p className="mb-2.5 mt-5 text-center text-[11px] font-medium text-muted">
-              Or try opening your app directly — many apps refuse this
-            </p>
-            <div className="grid grid-cols-3 gap-3">
-              {(
-                [
-                  { id: 'phonepe' as UpiApp, label: 'PhonePe', logo: <PhonePeLogo /> },
-                  { id: 'gpay' as UpiApp, label: 'GPay', logo: <GPayLogo /> },
-                  { id: 'paytm' as UpiApp, label: 'Paytm', logo: <PaytmLogo /> },
-                ]
-              ).map(({ id, label, logo }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => payWithApp(id)}
-                  className="flex flex-col items-center gap-1.5 rounded-2xl bg-elevated py-3 opacity-80 ring-1 ring-line transition active:scale-95 hover:opacity-100 hover:ring-brand/40"
-                >
-                  {logo}
-                  <span className="text-[11px] font-bold">{label}</span>
-                </button>
-              ))}
-            </div>
 
             <p className="mt-3 text-center text-[11px] text-muted">
               100% secure · UPI direct ·{' '}
@@ -278,23 +246,11 @@ export function PaymentSheet() {
                 </p>
               )}
 
-              {/* No app list here on purpose: the phone shows its own, listing
-                  what is really installed. See src/lib/upi.ts. */}
-              {isLikelyMobile() && (
-                <button
-                  type="button"
-                  onClick={openUpiAgain}
-                  className="mt-3 w-full rounded-2xl bg-elevated p-3 text-center text-[13px] font-semibold ring-1 ring-line transition active:scale-[0.98]"
-                >
-                  UPI app did not open? Tap to open it again
-                </button>
-              )}
-
               {!isLikelyMobile() && (
                 <div className="mt-3 flex gap-2 rounded-2xl bg-warning/10 p-3 text-xs text-warning">
                   <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
-                  UPI apps only open on a phone. On a computer, pay {PRICING.currencySymbol}
-                  {PRICING.amount} to the UPI ID above and quote the reference.
+                  Scan the QR with your phone, or pay {PRICING.currencySymbol}
+                  {PRICING.amount} to the UPI ID above from your UPI app.
                 </div>
               )}
 
@@ -418,7 +374,7 @@ export function PaymentSheet() {
             </>
           )}
           <div className="mt-6 space-y-2.5">
-            <Button size="lg" fullWidth onClick={pay}>
+            <Button size="lg" fullWidth onClick={retry}>
               Retry payment
             </Button>
             <Button size="lg" variant="ghost" fullWidth onClick={close}>
@@ -487,33 +443,53 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PhonePeLogo() {
-  return (
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="48" height="48" rx="12" fill="#5f259f" />
-      <path d="M14 11h13c4.97 0 9 4.03 9 9s-4.03 9-9 9h-6v8h-7V11zm7 12h6a3 3 0 000-6h-6v6z" fill="white" />
-    </svg>
-  );
-}
+/**
+ * Where the payer hands over the UPI transaction id from their app's success
+ * screen — the only thread tying this request to a line in the owner's bank
+ * statement. Every payment is the same ₹99, so without it two payers a minute
+ * apart cannot be told apart.
+ *
+ * Validation stays loose on purpose: the id is 12 digits from most apps but
+ * not all, and refusing a real one the payer is holding would be worse than
+ * accepting a wrong one. It decides nothing by itself — the owner reads the
+ * actual statement before approving.
+ */
+function TransactionIdForm({ onSubmit }: { onSubmit: (transactionId: string) => void }) {
+  const [value, setValue] = useState('');
+  const trimmed = value.trim();
+  const usable = trimmed.length >= 6;
 
-function GPayLogo() {
   return (
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="48" height="48" rx="12" fill="white" stroke="#e2e8f0" strokeWidth="1.5" />
-      <path d="M35.6 24.6c0-1-.1-2-.3-2.9H24v5.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.9c2.3-2.1 3.6-5.2 3.6-9z" fill="#4285F4" />
-      <path d="M24 37c3.2 0 5.9-1.1 7.9-2.9l-3.9-2.9c-1.1.7-2.5 1.1-4 1.1-3.1 0-5.7-2-6.6-4.8h-4v3C15.4 34.5 19.4 37 24 37z" fill="#34A853" />
-      <path d="M17.4 27.5c-.2-.7-.4-1.5-.4-2.5s.1-1.8.4-2.5v-3h-4c-.8 1.7-1.4 3.5-1.4 5.5s.5 3.8 1.4 5.5l4-3z" fill="#FBBC04" />
-      <path d="M24 17.2c1.8 0 3.4.6 4.6 1.8l3.4-3.4C30 13.7 27.2 12.5 24 12.5c-4.6 0-8.6 2.5-10.6 6.5l4 3c.9-2.8 3.5-4.8 6.6-4.8z" fill="#EA4335" />
-    </svg>
-  );
-}
+    <div className="mt-4">
+      <label
+        htmlFor="upi-txn-id"
+        className="block text-[12px] font-semibold leading-snug text-ink"
+      >
+        After paying, enter the UPI transaction ID
+      </label>
+      <p className="mt-0.5 text-[11px] leading-snug text-muted">
+        Your payment app shows it on the success screen — also called UPI
+        reference number or UTR.
+      </p>
 
-function PaytmLogo() {
-  return (
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="48" height="48" rx="12" fill="#00BAF2" />
-      <path d="M13 12h13c4.4 0 8 3.6 8 8s-3.6 8-8 8h-5v8h-8V12zm8 10h5a2 2 0 000-4h-5v4z" fill="white" />
-    </svg>
+      <input
+        id="upi-txn-id"
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        spellCheck={false}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder="e.g. 412345678901"
+        className="mt-2 w-full rounded-2xl bg-elevated px-3.5 py-3 font-mono text-[14px] tracking-wide ring-1 ring-line outline-none transition placeholder:font-sans placeholder:tracking-normal placeholder:text-muted focus:ring-2 focus:ring-brand"
+      />
+
+      <div className="mt-2.5">
+        <Button size="lg" fullWidth disabled={!usable} onClick={() => onSubmit(trimmed)}>
+          I have paid {PRICING.currencySymbol}{PRICING.amount}
+        </Button>
+      </div>
+    </div>
   );
 }
 

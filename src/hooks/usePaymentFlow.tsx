@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { attemptReference, buildAppUpiUri, buildUpiUri, openUpiUri, type UpiApp } from '@/lib/upi';
+
 import {
   cancelPayment,
   createPaymentDraft,
@@ -25,30 +25,20 @@ import { useGuestSession } from './useGuestSession';
  *   idle → sheet → awaiting → success
  *                          ↘ pending | cancelled
  *
- * Three rules shape it.
+ * Two rules shape it.
  *
- * 1. Nothing here decides that a payment succeeded. A UPI app tells the browser
- *    nothing, so leaving for one only means the user left. `success` arrives
- *    only when the owner confirms the credit, over a Firestore listener.
+ * 1. Nothing here decides that a payment succeeded. The payer scans a QR in
+ *    their own app, which tells the browser nothing, and the id they type
+ *    afterwards is their claim, not proof. `success` arrives only when the
+ *    owner confirms the credit, over a Firestore listener.
  *
- * 2. The handoff must happen inside the user's tap. Browsers refuse to open a
- *    custom scheme once the gesture is gone, so the UPI link is built the
- *    moment the sheet opens and the redirect is synchronous.
+ * 2. Nothing blocks the payer. The Firestore record is written in the
+ *    background when the sheet opens, so a weak connection cannot stall the
+ *    QR — and if that write fails the payer still sees a reference to quote.
  *
- * 3. Nothing blocks the redirect. A UPI link needs only the payee and the
- *    amount, both already in the bundle, so the Firestore record is written
- *    alongside it — and if that write fails the user still reaches their UPI
- *    app with a reference to quote.
- *
- * The sheet's three buttons each hand the phone that app's own scheme —
- * `phonepe://`, `tez://`, `paytmmp://` — so tapping PhonePe opens PhonePe. The
- * retry affordance falls back to the plain `upi://pay?…` link, which lets the
- * operating system show its own picker of everything actually installed.
- *
- * The record is created when the sheet opens, not when Pay is tapped, so it has
- * a few seconds of a live tab to reach the server. The `initiated → pending`
- * update does race the redirect, which is why returning to the tab re-checks:
- * Firestore flushes whatever it queued while the UPI app was in front.
+ * There is no handoff to a UPI app any more. Deep links are refused for a
+ * personal VPA — see `src/lib/upi.ts` — so the sheet shows a QR and the payee
+ * details, and the payer pays from inside their own app.
  */
 
 export type PaymentPhase =
@@ -76,32 +66,18 @@ interface PaymentFlowValue {
   recorded: boolean;
   /** Opens the ₹99 sheet. Called by every Call / Chat / Video button. */
   open: (partner: Partner, interactionType: InteractionType) => void;
-  /** Hands off to the user's UPI apps with ₹99 pre-filled. */
-  pay: () => void;
-  /** Opens a specific UPI app (PhonePe / GPay / Paytm) with ₹99 pre-filled. */
-  payWithApp: (app: UpiApp) => void;
   /**
-   * Records that the payer is paying by QR or by pasting the UPI ID. There is
-   * no redirect — they are already inside their own app — but the request still
-   * has to move to `pending`, or the owner never learns it happened.
+   * Records the payment the payer says they just made, with the UPI
+   * transaction id from their app's success screen.
    */
-  payManually: () => void;
-  /** Re-opens the phone's UPI picker for the same payment. */
-  openUpiAgain: () => void;
+  payManually: (transactionId: string) => void;
+  /** Back to the sheet after a rejected payment, on a fresh request. */
+  retry: () => void;
   /** Manual "I have paid" re-check. */
   recheck: () => void;
   close: () => void;
   reset: () => void;
 }
-
-/**
- * How the payer is getting to their UPI app: one of the three buttons, the OS
- * picker, or nothing at all because they are paying by QR or pasted UPI ID.
- */
-type Handoff =
-  | { kind: 'app'; app: UpiApp }
-  | { kind: 'picker' }
-  | { kind: 'manual' };
 
 const PaymentFlowContext = createContext<PaymentFlowValue | null>(null);
 
@@ -117,9 +93,6 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
   const unsubscribeStatus = useRef<(() => void) | null>(null);
   const mounted = useRef(true);
 
-  // UPI wants a fresh `tr` for every attempt at the same request; replaying one
-  // is among the things an app reports back as a bogus "limit exceeded".
-  const attempt = useRef(0);
 
   // Read by the visibility listener, which is registered once and must not go
   // stale between renders.
@@ -174,20 +147,14 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
   /**
    * Moves the request to `pending` and starts watching for the owner's verdict.
    *
-   * `uri` is whatever should be opened on the way out, or null when the payer
-   * is paying by QR or by pasting the UPI ID — there is nothing to open then,
-   * because they are already inside their own app.
-   *
-   * The redirect is the very first statement on purpose. A browser only honours
-   * a navigation to a custom scheme while the tap that triggered it is still
-   * live, so no Firestore write and no state update may run ahead of it.
+   * `transactionId` is what the payer read off their UPI app's success screen.
+   * It is the only thread tying a row here to a line in the owner's bank
+   * statement, so it travels with the status change rather than after it.
    */
-  const launch = useCallback(
-    (draft: PaymentDraft, uri: string | null) => {
-      if (uri) openUpiUri(uri);
-
+  const record = useCallback(
+    (draft: PaymentDraft, transactionId: string) => {
       setPhase('awaiting');
-      markPaymentAttempted(draft.paymentId);
+      markPaymentAttempted(draft.paymentId, transactionId);
       watchPayment(draft.paymentId);
     },
     [watchPayment],
@@ -223,7 +190,6 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       setRecorded(false);
       setTarget({ partner, interactionType });
       setPhase('sheet');
-      attempt.current = 0;
       prepare(partner, interactionType);
     },
     [stopWatching, prepare],
@@ -248,26 +214,16 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
     reset();
   }, [order, phase, reset]);
 
-  /**
-   * Shared entry point behind every pay button.
-   *
-   * Everything here is synchronous, so the redirect inside `launch` stays
-   * within the user's tap — the only way a browser will open a custom scheme.
-   */
-  const start = useCallback(
-    (handoff: Handoff) => {
+  const payManually = useCallback(
+    (transactionId: string) => {
       if (!target) return;
 
       // A record the owner has already ruled on is closed for good: the rules
       // let a payer move a request out of `initiated`/`pending` and nowhere
-      // else. So retrying after a verdict has to open a fresh request, or the
-      // very first write would be rejected and the sheet would snap to failed.
+      // else. So paying again after a verdict has to open a fresh request.
       const reusable =
         phase === 'sheet' || phase === 'awaiting' || phase === 'pending' ? order : null;
 
-      // The sheet prepares a draft as it opens, but the session may still have
-      // been starting then. Preparing again here keeps the buttons live rather
-      // than leaving them dead on a tap that produced nothing.
       const draft = reusable ?? prepare(target.partner, target.interactionType);
       if (!draft) {
         setErrorMessage('Your session is still starting. Please try again in a moment.');
@@ -276,48 +232,20 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       }
 
       setErrorMessage(null);
-
-      attempt.current += 1;
-      const fields = {
-        payeeVpa: draft.payeeVpa,
-        payeeName: draft.payeeName,
-        amount: draft.amount,
-        reference: attemptReference(draft.reference, attempt.current),
-        note: draft.note,
-      };
-
-      const uri =
-        handoff.kind === 'app'
-          ? buildAppUpiUri(fields, handoff.app)
-          : handoff.kind === 'picker'
-            ? buildUpiUri(fields)
-            : null;
-
-      launch(draft, uri);
+      record(draft, transactionId);
     },
-    [target, order, phase, launch, prepare],
+    [target, order, phase, prepare, record],
   );
 
-  const pay = useCallback(() => start({ kind: 'picker' }), [start]);
-
-  const payWithApp = useCallback((app: UpiApp) => start({ kind: 'app', app }), [start]);
-
-  const payManually = useCallback(() => start({ kind: 'manual' }), [start]);
-
-  const openUpiAgain = useCallback(() => {
-    if (!order) return;
-    attempt.current += 1;
-    launch(
-      order,
-      buildUpiUri({
-        payeeVpa: order.payeeVpa,
-        payeeName: order.payeeName,
-        amount: order.amount,
-        reference: attemptReference(order.reference, attempt.current),
-        note: order.note,
-      }),
-    );
-  }, [order, launch]);
+  const retry = useCallback(() => {
+    if (!target) return;
+    stopWatching();
+    setErrorMessage(null);
+    setOrder(null);
+    setRecorded(false);
+    setPhase('sheet');
+    prepare(target.partner, target.interactionType);
+  }, [target, stopWatching, prepare]);
 
   const recheck = useCallback(() => {
     const paymentId = order?.paymentId;
@@ -376,10 +304,8 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       errorMessage,
       recorded,
       open,
-      pay,
-      payWithApp,
       payManually,
-      openUpiAgain,
+      retry,
       recheck,
       close,
       reset,
@@ -391,10 +317,8 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       errorMessage,
       recorded,
       open,
-      pay,
-      payWithApp,
       payManually,
-      openUpiAgain,
+      retry,
       recheck,
       close,
       reset,

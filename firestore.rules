@@ -123,9 +123,13 @@ service cloud.firestore {
         && request.resource.data.reviewedBy == null
         && request.resource.data.transactionId == null;
 
-      // The payer may say "I opened a UPI app" or "I backed out", and nothing
-      // else: never the amount, never who it belongs to, and never a verdict.
-      // Only the admin can mark a payment verified or failed.
+      // The payer may say "I paid, here is the id my app gave me" or "I backed
+      // out", and nothing else: never the amount, never who it belongs to, and
+      // never a verdict. Only the admin can mark a payment verified or failed.
+      //
+      // The transaction id is bounded but not trusted. It is a claim the payer
+      // types, and the admin checks it against the real bank credit before
+      // approving — the bounds only stop the field being used as free storage.
       allow update: if isAdmin()
         || (isSignedIn()
             && resource.data.userId == request.auth.uid
@@ -136,7 +140,11 @@ service cloud.firestore {
             && resource.data.status in ['initiated', 'pending']
             && request.resource.data.status in ['pending', 'cancelled']
             && request.resource.data.verifiedAt == null
-            && request.resource.data.reviewedBy == null);
+            && request.resource.data.reviewedBy == null
+            && (request.resource.data.transactionId == null
+                || (request.resource.data.transactionId is string
+                    && request.resource.data.transactionId.size() >= 6
+                    && request.resource.data.transactionId.size() <= 32)));
 
       allow delete: if false;
     }

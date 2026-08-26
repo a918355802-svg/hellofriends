@@ -113,12 +113,29 @@ export function createPaymentDraft(params: {
   return { draft, saved };
 }
 
-/** Marks the record `pending` once the payer actually leaves for a UPI app. */
-export async function markPaymentAttempted(paymentId: string): Promise<void> {
+/**
+ * Moves the record to `pending`, carrying the payer's own transaction id when
+ * they gave one.
+ *
+ * That id is the whole point of the manual flow: it is what the owner matches
+ * against the credit in their bank statement, and without it two payers a
+ * minute apart are the same ₹99 and nothing tells them apart. It is still only
+ * a claim — anyone can type anything — which is why it decides nothing on its
+ * own and the owner reads the real statement before approving.
+ *
+ * Omitting it leaves whatever is already stored alone, so the visibility
+ * re-check cannot wipe an id the payer has already submitted.
+ */
+export async function markPaymentAttempted(
+  paymentId: string,
+  transactionId?: string,
+): Promise<void> {
   if (!paymentId) return;
+  const claimed = transactionId?.trim().slice(0, 32);
   try {
     await updateDoc(doc(getDb(), PAYMENTS, paymentId), {
       status: 'pending',
+      ...(claimed ? { transactionId: claimed } : {}),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
