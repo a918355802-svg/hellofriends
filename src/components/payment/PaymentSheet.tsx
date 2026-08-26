@@ -43,7 +43,7 @@ const ASSURANCES: { icon: IconName; tone: string; text: string }[] = [
 export function PaymentSheet() {
   const {
     phase, target, order, errorMessage, recorded,
-    pay, payWithApp, openUpiAgain, recheck, close, reset,
+    pay, payWithApp, payManually, openUpiAgain, recheck, close, reset,
   } = usePaymentFlow();
   const navigate = useNavigate();
 
@@ -137,8 +137,66 @@ export function PaymentSheet() {
           </ul>
 
           <div className="mt-5">
-            <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
-              Pay {PRICING.currencySymbol}{PRICING.amount} with
+            {/* Manual first, and deliberately so. The deep links below are
+                refused on real devices — a third-party intent collecting into
+                a personal VPA is declined and comes back as a generic "check
+                limit", on PhonePe and GPay alike. Paying from inside the
+                payer's own app is the path that actually completes, so it is
+                the one that leads. */}
+            {order && (
+              <>
+                <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
+                  Pay {PRICING.currencySymbol}{PRICING.amount} by UPI
+                </p>
+
+                <div className="rounded-2xl bg-elevated p-4 ring-1 ring-line">
+                  <ol className="mb-3 space-y-1.5">
+                    {[
+                      'Copy the UPI ID below',
+                      'Open PhonePe, GPay or Paytm',
+                      `Send ${PRICING.currencySymbol}${PRICING.amount} to that UPI ID`,
+                    ].map((step, index) => (
+                      <li key={step} className="flex items-center gap-2.5">
+                        <span className="flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full bg-brand/12 text-[10px] font-bold text-brand">
+                          {index + 1}
+                        </span>
+                        <span className="text-[12.5px] font-medium leading-snug text-ink">
+                          {step}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+
+                  <div className="space-y-2">
+                    <CopyRow label="UPI ID" value={order.payeeVpa} />
+                    <CopyRow
+                      label="Amount"
+                      value={String(order.amount)}
+                    />
+                  </div>
+
+                  <div className="mt-3.5 flex flex-col items-center border-t border-line pt-3.5">
+                    <UpiQr uri={order.upiUri} size={172} />
+                    <p className="mt-2 text-center text-[11px] leading-snug text-muted">
+                      Or scan from another phone — or screenshot this and use
+                      <span className="font-medium text-ink"> Scan from gallery </span>
+                      in your UPI app.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <Button size="lg" fullWidth onClick={payManually}>
+                    I have paid {PRICING.currencySymbol}{PRICING.amount}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* Kept, but demoted: these do work wherever the payer's app is
+                willing to take the intent, and they cost one tap when it is. */}
+            <p className="mb-2.5 mt-5 text-center text-[11px] font-medium text-muted">
+              Or try opening your app directly
             </p>
             <div className="grid grid-cols-3 gap-3">
               {(
@@ -152,41 +210,13 @@ export function PaymentSheet() {
                   key={id}
                   type="button"
                   onClick={() => payWithApp(id)}
-                  className="flex flex-col items-center gap-2 rounded-2xl bg-elevated py-4 ring-1 ring-line transition active:scale-95 hover:ring-brand/40"
+                  className="flex flex-col items-center gap-1.5 rounded-2xl bg-elevated py-3 ring-1 ring-line transition active:scale-95 hover:ring-brand/40"
                 >
                   {logo}
-                  <span className="text-[12px] font-bold">{label}</span>
+                  <span className="text-[11px] font-bold">{label}</span>
                 </button>
               ))}
             </div>
-
-            {/* The deep links above are refused whenever the payer's app
-                declines a third-party intent into a personal VPA — it comes
-                back as a generic "check limit". This block is the way through:
-                the payer starts the payment inside their own app, where it is
-                an ordinary scan or an ordinary UPI ID. */}
-            {order && (
-              <div className="mt-5 rounded-2xl bg-elevated p-4 ring-1 ring-line">
-                <p className="text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
-                  Or pay manually
-                </p>
-
-                <div className="mt-3 flex justify-center">
-                  <UpiQr uri={order.upiUri} size={188} />
-                </div>
-
-                <p className="mt-2.5 text-center text-[11px] leading-snug text-muted">
-                  Scan from another phone — or screenshot this and use
-                  <span className="font-medium text-ink"> Scan from gallery </span>
-                  inside your UPI app.
-                </p>
-
-                <div className="mt-3 space-y-2">
-                  <CopyRow label="UPI ID" value={order.payeeVpa} />
-                  <CopyRow label="Amount" value={String(order.amount)} />
-                </div>
-              </div>
-            )}
 
             <p className="mt-3 text-center text-[11px] text-muted">
               100% secure · UPI direct ·{' '}

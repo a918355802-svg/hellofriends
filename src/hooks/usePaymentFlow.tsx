@@ -80,6 +80,12 @@ interface PaymentFlowValue {
   pay: () => void;
   /** Opens a specific UPI app (PhonePe / GPay / Paytm) with ₹99 pre-filled. */
   payWithApp: (app: UpiApp) => void;
+  /**
+   * Records that the payer is paying by QR or by pasting the UPI ID. There is
+   * no redirect — they are already inside their own app — but the request still
+   * has to move to `pending`, or the owner never learns it happened.
+   */
+  payManually: () => void;
   /** Re-opens the phone's UPI picker for the same payment. */
   openUpiAgain: () => void;
   /** Manual "I have paid" re-check. */
@@ -87,6 +93,15 @@ interface PaymentFlowValue {
   close: () => void;
   reset: () => void;
 }
+
+/**
+ * How the payer is getting to their UPI app: one of the three buttons, the OS
+ * picker, or nothing at all because they are paying by QR or pasted UPI ID.
+ */
+type Handoff =
+  | { kind: 'app'; app: UpiApp }
+  | { kind: 'picker' }
+  | { kind: 'manual' };
 
 const PaymentFlowContext = createContext<PaymentFlowValue | null>(null);
 
@@ -153,30 +168,19 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Hands the phone off to a UPI app.
+   * Moves the request to `pending` and starts watching for the owner's verdict.
    *
-   * `app` names one of the three buttons on the sheet and produces that app's
-   * own scheme; without it the plain `upi://` link goes out and the OS shows
-   * its own picker (the retry affordance).
+   * `uri` is whatever should be opened on the way out, or null when the payer
+   * is paying by QR or by pasting the UPI ID — there is nothing to open then,
+   * because they are already inside their own app.
    *
    * The redirect is the very first statement on purpose. A browser only honours
    * a navigation to a custom scheme while the tap that triggered it is still
    * live, so no Firestore write and no state update may run ahead of it.
    */
   const launch = useCallback(
-    (draft: PaymentDraft, app?: UpiApp) => {
-      openUpiUri(
-        app
-          ? buildAppUpiUri(
-              {
-                payeeVpa: draft.payeeVpa,
-                payeeName: draft.payeeName,
-                amount: draft.amount,
-              },
-              app,
-            )
-          : draft.upiUri,
-      );
+    (draft: PaymentDraft, uri: string | null) => {
+      if (uri) openUpiUri(uri);
 
       setPhase('awaiting');
       markPaymentAttempted(draft.paymentId);
@@ -246,7 +250,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
    * within the user's tap — the only way a browser will open a custom scheme.
    */
   const start = useCallback(
-    (app?: UpiApp) => {
+    (handoff: Handoff) => {
       if (!target) return;
 
       // A record the owner has already ruled on is closed for good: the rules
@@ -267,18 +271,35 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       }
 
       setErrorMessage(null);
-      launch(draft, app);
+
+      const uri =
+        handoff.kind === 'app'
+          ? buildAppUpiUri(
+              {
+                payeeVpa: draft.payeeVpa,
+                payeeName: draft.payeeName,
+                amount: draft.amount,
+              },
+              handoff.app,
+            )
+          : handoff.kind === 'picker'
+            ? draft.upiUri
+            : null;
+
+      launch(draft, uri);
     },
     [target, order, phase, launch, prepare],
   );
 
-  const pay = useCallback(() => start(), [start]);
+  const pay = useCallback(() => start({ kind: 'picker' }), [start]);
 
-  const payWithApp = useCallback((app: UpiApp) => start(app), [start]);
+  const payWithApp = useCallback((app: UpiApp) => start({ kind: 'app', app }), [start]);
+
+  const payManually = useCallback(() => start({ kind: 'manual' }), [start]);
 
   const openUpiAgain = useCallback(() => {
     if (!order) return;
-    launch(order);
+    launch(order, order.upiUri);
   }, [order, launch]);
 
   const recheck = useCallback(() => {
@@ -340,6 +361,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       open,
       pay,
       payWithApp,
+      payManually,
       openUpiAgain,
       recheck,
       close,
@@ -354,6 +376,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       open,
       pay,
       payWithApp,
+      payManually,
       openUpiAgain,
       recheck,
       close,
