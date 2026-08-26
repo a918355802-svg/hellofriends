@@ -46,12 +46,15 @@ export const PRICING = {
  * env vars are optional overrides so the VPA can be changed without a code
  * edit (useful for staging).
  *
- * The amount and the payee are also fixed server-side in `api/_lib/payments.ts`
- * — that copy is the authoritative one, so a tampered browser cannot redirect
- * the money elsewhere or change the price.
+ * There is no server-side copy of any of this. The app talks to Firestore
+ * directly, so the VPA and the price live only in the bundle a visitor
+ * downloads, and a determined one can edit either before the intent is built.
+ * That is survivable only because nothing is granted on the payer's say-so:
+ * the owner reads the real credit in their own bank before approving, and the
+ * Firestore rules let no one but the admin record that verdict.
  */
 export const UPI = {
-  payeeVpa: import.meta.env.VITE_UPI_PAYEE_VPA || 'navneetyadav8070@okicici',
+  payeeVpa: import.meta.env.VITE_UPI_PAYEE_VPA || 'navneetyadav8070-1@okaxis',
   // The account holder, not the brand. This is the `pn` of a person-to-person
   // UPI intent, and it should match the name the payer's app resolves from the
   // VPA itself — a brand name against a personal VPA reads as a merchant
