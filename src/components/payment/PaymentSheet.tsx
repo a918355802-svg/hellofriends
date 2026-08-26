@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sheet } from '@/components/ui/Sheet';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { LazyImage } from '@/components/ui/LazyImage';
+import { UpiQr } from '@/components/payment/UpiQr';
 import { cn } from '@/lib/cn';
 import { PRICING, BRAND } from '@/config/brand';
 import { isLikelyMobile, type UpiApp } from '@/lib/upi';
@@ -157,6 +159,34 @@ export function PaymentSheet() {
                 </button>
               ))}
             </div>
+
+            {/* The deep links above are refused whenever the payer's app
+                declines a third-party intent into a personal VPA — it comes
+                back as a generic "check limit". This block is the way through:
+                the payer starts the payment inside their own app, where it is
+                an ordinary scan or an ordinary UPI ID. */}
+            {order && (
+              <div className="mt-5 rounded-2xl bg-elevated p-4 ring-1 ring-line">
+                <p className="text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
+                  Or pay manually
+                </p>
+
+                <div className="mt-3 flex justify-center">
+                  <UpiQr uri={order.upiUri} size={188} />
+                </div>
+
+                <p className="mt-2.5 text-center text-[11px] leading-snug text-muted">
+                  Scan from another phone — or screenshot this and use
+                  <span className="font-medium text-ink"> Scan from gallery </span>
+                  inside your UPI app.
+                </p>
+
+                <div className="mt-3 space-y-2">
+                  <CopyRow label="UPI ID" value={order.payeeVpa} />
+                  <CopyRow label="Amount" value={String(order.amount)} />
+                </div>
+              </div>
+            )}
 
             <p className="mt-3 text-center text-[11px] text-muted">
               100% secure · UPI direct ·{' '}
@@ -367,6 +397,62 @@ export function PaymentSheet() {
         </div>
       )}
     </Sheet>
+  );
+}
+
+/**
+ * A value the payer copies into their own UPI app.
+ *
+ * `navigator.clipboard` needs a secure context and can still be refused, so a
+ * hidden textarea and `execCommand` stand behind it. Deprecated, but it is the
+ * only thing that works on the older in-app browsers this has to survive — and
+ * a copy button that silently does nothing is worse than an old API.
+ */
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const field = document.createElement('textarea');
+      field.value = value;
+      field.setAttribute('readonly', '');
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(field);
+      }
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface px-3 py-2.5 text-left ring-1 ring-line transition active:scale-[0.98]"
+    >
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-right font-mono text-[13px] font-semibold">
+        {value}
+      </span>
+      <span
+        className={cn(
+          'shrink-0 text-[11px] font-bold',
+          copied ? 'text-online' : 'text-brand',
+        )}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </span>
+    </button>
   );
 }
 
