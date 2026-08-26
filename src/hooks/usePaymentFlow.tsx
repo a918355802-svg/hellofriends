@@ -275,11 +275,7 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
       const uri =
         handoff.kind === 'app'
           ? buildAppUpiUri(
-              {
-                payeeVpa: draft.payeeVpa,
-                payeeName: draft.payeeName,
-                amount: draft.amount,
-              },
+              { payeeVpa: draft.payeeVpa, amount: draft.amount },
               handoff.app,
             )
           : handoff.kind === 'picker'

@@ -19,48 +19,27 @@
 /**
  * Assembles the shared UPI query string.
  *
- * Deliberately minimal: the payee, their name, and the amount. Nothing else.
- *
- * This is an ordinary person-to-person transfer into a personal VPA, so the
- * intent is written the way one looks — the same four fields a personal UPI QR
- * carries. The extras all work against that. `tr` is a *merchant* transaction
- * reference, and sending it makes the app try to validate the intent against a
- * merchant code and signature a personal VPA does not have; PhonePe answers
- * that by refusing the payment outright. A `tn` note on top of it only makes
- * the request look more like a collection and less like a transfer.
+ * Two fields: who is being paid, and how much. Nothing else — no payee name,
+ * no currency, no note, no reference. The payer's app resolves the account
+ * holder's name from the VPA itself and defaults the currency to INR, so both
+ * are noise, and every extra field is one more thing for an app to object to.
  *
  * Built by hand rather than with `URLSearchParams`, which would percent-encode
- * the `@` in the VPA. Several UPI apps reject that, so `pa` is written
- * literally and only the free-text name is encoded.
+ * the `@` in the VPA. Several UPI apps reject that outright.
  *
- * The trade-off is real and is not a bug: the payment reaches the owner's bank
- * carrying no reference, so a credit cannot be matched to a dashboard row by
- * anything except its amount and the time it arrived. Every payment here is
- * the same ₹99, so two payers a minute apart are indistinguishable in the bank
- * statement. The reference still exists on screen and in Firestore for support
- * to quote; it simply no longer travels with the money.
+ * Worth being clear about what this does NOT fix: the apps refuse a
+ * third-party intent collecting into a personal VPA and report it back as a
+ * generic "check limit". That is a decision made on the bank's side about the
+ * account, not about the link, and no arrangement of these fields reaches it.
+ * `tr` and `tn` were each dropped in turn against the same error. The QR and
+ * the copyable UPI ID on the sheet are what actually complete a payment.
  */
-function upiQuery(params: {
-  payeeVpa: string;
-  payeeName: string;
-  amount: number;
-  currency?: string;
-}): string {
-  return [
-    `pa=${params.payeeVpa}`,
-    `pn=${encodeURIComponent(params.payeeName)}`,
-    `am=${params.amount.toFixed(2)}`,
-    `cu=${params.currency ?? 'INR'}`,
-  ].join('&');
+function upiQuery(params: { payeeVpa: string; amount: number }): string {
+  return [`pa=${params.payeeVpa}`, `am=${params.amount.toFixed(2)}`].join('&');
 }
 
 /** Builds a `upi://pay` URI — the one the OS picker resolves. */
-export function buildUpiUri(params: {
-  payeeVpa: string;
-  payeeName: string;
-  amount: number;
-  currency?: string;
-}): string {
+export function buildUpiUri(params: { payeeVpa: string; amount: number }): string {
   return `upi://pay?${upiQuery(params)}`;
 }
 
@@ -99,11 +78,7 @@ export type UpiApp = 'phonepe' | 'gpay' | 'paytm';
  * last (often WhatsApp), not the app the user actually tapped.
  */
 export function buildAppUpiUri(
-  params: {
-    payeeVpa: string;
-    payeeName: string;
-    amount: number;
-  },
+  params: { payeeVpa: string; amount: number },
   app: UpiApp,
 ): string {
   const query = upiQuery(params);

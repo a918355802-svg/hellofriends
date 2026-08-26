@@ -74,7 +74,6 @@ export function createPaymentDraft(params: {
     note,
     upiUri: buildUpiUri({
       payeeVpa: UPI.payeeVpa,
-      payeeName,
       amount: PRICING.amount,
     }),
   };
