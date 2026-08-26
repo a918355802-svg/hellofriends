@@ -137,12 +137,14 @@ export function PaymentSheet() {
           </ul>
 
           <div className="mt-5">
-            {/* Manual first, and deliberately so. The deep links below are
-                refused on real devices — a third-party intent collecting into
-                a personal VPA is declined and comes back as a generic "check
-                limit", on PhonePe and GPay alike. Paying from inside the
-                payer's own app is the path that actually completes, so it is
-                the one that leads. */}
+            {/* The QR leads because it is the only path confirmed to complete.
+                The deep links were tried against five payload variations, two
+                payer phones and two bank handles, and were refused every time
+                — an app declines a third-party intent collecting into a
+                personal VPA and reports it back as a generic "check limit".
+                A QR carries the same URI but never touches the OS: the payer
+                scans it inside their own app, where it is an ordinary scan.
+                The steps below are the ones that were walked end to end. */}
             {order && (
               <>
                 <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-widest text-muted">
@@ -150,38 +152,36 @@ export function PaymentSheet() {
                 </p>
 
                 <div className="rounded-2xl bg-elevated p-4 ring-1 ring-line">
-                  <ol className="mb-3 space-y-1.5">
+                  <div className="flex justify-center">
+                    <UpiQr uri={order.upiUri} size={196} />
+                  </div>
+
+                  <ol className="mt-3.5 space-y-1.5">
                     {[
-                      'Copy the UPI ID below',
-                      'Open PhonePe, GPay or Paytm',
-                      `Send ${PRICING.currencySymbol}${PRICING.amount} to that UPI ID`,
+                      <>Take a <span className="font-semibold text-ink">screenshot</span> of this QR</>,
+                      <>Open GPay, PhonePe or Paytm</>,
+                      <>Tap <span className="font-semibold text-ink">Scan QR</span>, then pick it from your gallery</>,
+                      <>Pay {PRICING.currencySymbol}{PRICING.amount}</>,
                     ].map((step, index) => (
-                      <li key={step} className="flex items-center gap-2.5">
+                      <li key={index} className="flex items-center gap-2.5">
                         <span className="flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full bg-brand/12 text-[10px] font-bold text-brand">
                           {index + 1}
                         </span>
-                        <span className="text-[12.5px] font-medium leading-snug text-ink">
+                        <span className="text-[12.5px] font-medium leading-snug text-muted">
                           {step}
                         </span>
                       </li>
                     ))}
                   </ol>
 
-                  <div className="space-y-2">
-                    <CopyRow label="UPI ID" value={order.payeeVpa} />
-                    <CopyRow
-                      label="Amount"
-                      value={String(order.amount)}
-                    />
-                  </div>
-
-                  <div className="mt-3.5 flex flex-col items-center border-t border-line pt-3.5">
-                    <UpiQr uri={order.upiUri} size={172} />
-                    <p className="mt-2 text-center text-[11px] leading-snug text-muted">
-                      Or scan from another phone — or screenshot this and use
-                      <span className="font-medium text-ink"> Scan from gallery </span>
-                      in your UPI app.
+                  <div className="mt-3.5 border-t border-line pt-3.5">
+                    <p className="mb-2 text-center text-[10.5px] font-semibold uppercase tracking-wider text-muted">
+                      Or type it yourself
                     </p>
+                    <div className="space-y-2">
+                      <CopyRow label="UPI ID" value={order.payeeVpa} />
+                      <CopyRow label="Amount" value={String(order.amount)} />
+                    </div>
                   </div>
                 </div>
 
@@ -193,10 +193,11 @@ export function PaymentSheet() {
               </>
             )}
 
-            {/* Kept, but demoted: these do work wherever the payer's app is
-                willing to take the intent, and they cost one tap when it is. */}
+            {/* Kept for the payer whose app does take the intent — it is one
+                tap when it works. Labelled honestly, because on every device
+                tested so far it has not. */}
             <p className="mb-2.5 mt-5 text-center text-[11px] font-medium text-muted">
-              Or try opening your app directly
+              Or try opening your app directly — many apps refuse this
             </p>
             <div className="grid grid-cols-3 gap-3">
               {(
@@ -210,7 +211,7 @@ export function PaymentSheet() {
                   key={id}
                   type="button"
                   onClick={() => payWithApp(id)}
-                  className="flex flex-col items-center gap-1.5 rounded-2xl bg-elevated py-3 ring-1 ring-line transition active:scale-95 hover:ring-brand/40"
+                  className="flex flex-col items-center gap-1.5 rounded-2xl bg-elevated py-3 opacity-80 ring-1 ring-line transition active:scale-95 hover:opacity-100 hover:ring-brand/40"
                 >
                   {logo}
                   <span className="text-[11px] font-bold">{label}</span>
