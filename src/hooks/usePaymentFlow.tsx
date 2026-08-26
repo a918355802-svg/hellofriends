@@ -172,8 +172,6 @@ export function PaymentFlowProvider({ children }: { children: ReactNode }) {
                 payeeVpa: draft.payeeVpa,
                 payeeName: draft.payeeName,
                 amount: draft.amount,
-                reference: draft.reference,
-                note: draft.note,
               },
               app,
             )

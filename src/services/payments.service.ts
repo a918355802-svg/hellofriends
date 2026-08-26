@@ -60,7 +60,7 @@ export function createPaymentDraft(params: {
   interactionType: InteractionType;
 }): { draft: PaymentDraft; saved: Promise<void> } {
   const reference = makeReference();
-  const payeeName = UPI.payeeName || 'Hellofriends';
+  const payeeName = UPI.payeeName || 'Navneet Yadav';
   const ref = doc(collection(getDb(), PAYMENTS));
 
   const note = `${params.partner.name} ${params.interactionType}`;
@@ -76,8 +76,6 @@ export function createPaymentDraft(params: {
       payeeVpa: UPI.payeeVpa,
       payeeName,
       amount: PRICING.amount,
-      reference,
-      note,
     }),
   };
 

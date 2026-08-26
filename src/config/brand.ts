@@ -52,7 +52,11 @@ export const PRICING = {
  */
 export const UPI = {
   payeeVpa: import.meta.env.VITE_UPI_PAYEE_VPA || 'navneetyadav8070@okicici',
-  payeeName: import.meta.env.VITE_UPI_PAYEE_NAME || BRAND.name,
+  // The account holder, not the brand. This is the `pn` of a person-to-person
+  // UPI intent, and it should match the name the payer's app resolves from the
+  // VPA itself — a brand name against a personal VPA reads as a merchant
+  // collection, which is exactly what the apps restrict.
+  payeeName: import.meta.env.VITE_UPI_PAYEE_NAME || 'Navneet Yadav',
 } as const;
 
 export const FEED = {

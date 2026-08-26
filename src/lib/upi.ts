@@ -19,38 +19,38 @@
 /**
  * Assembles the shared UPI query string.
  *
+ * Deliberately minimal: the payee, their name, and the amount. Nothing else.
+ *
+ * This is an ordinary person-to-person transfer into a personal VPA, so the
+ * intent is written the way one looks — the same four fields a personal UPI QR
+ * carries. The extras all work against that. `tr` is a *merchant* transaction
+ * reference, and sending it makes the app try to validate the intent against a
+ * merchant code and signature a personal VPA does not have; PhonePe answers
+ * that by refusing the payment outright. A `tn` note on top of it only makes
+ * the request look more like a collection and less like a transfer.
+ *
  * Built by hand rather than with `URLSearchParams`, which would percent-encode
  * the `@` in the VPA. Several UPI apps reject that, so `pa` is written
- * literally and only the free-text fields are encoded.
+ * literally and only the free-text name is encoded.
  *
- * No `tr`. That field is a *merchant* transaction reference, and sending it
- * makes the intent look like a merchant collection — which the app then tries
- * to validate against a merchant code and a signature that a plain personal
- * VPA does not have. PhonePe answers that by refusing the payment outright.
- * Dropping it leaves an ordinary person-to-person transfer, which is what this
- * actually is.
- *
- * The reference therefore rides in `tn`, the free-text note, where it still
- * reaches the owner's bank narration and can be matched to a dashboard row.
- * UPI notes are short, so the reference goes first and the description takes
- * whatever room is left.
+ * The trade-off is real and is not a bug: the payment reaches the owner's bank
+ * carrying no reference, so a credit cannot be matched to a dashboard row by
+ * anything except its amount and the time it arrived. Every payment here is
+ * the same ₹99, so two payers a minute apart are indistinguishable in the bank
+ * statement. The reference still exists on screen and in Firestore for support
+ * to quote; it simply no longer travels with the money.
  */
 function upiQuery(params: {
   payeeVpa: string;
   payeeName: string;
   amount: number;
-  reference: string;
-  note: string;
   currency?: string;
 }): string {
-  const note = `${params.reference} ${params.note}`.slice(0, 50);
-
   return [
     `pa=${params.payeeVpa}`,
     `pn=${encodeURIComponent(params.payeeName)}`,
     `am=${params.amount.toFixed(2)}`,
     `cu=${params.currency ?? 'INR'}`,
-    `tn=${encodeURIComponent(note)}`,
   ].join('&');
 }
 
@@ -59,17 +59,16 @@ export function buildUpiUri(params: {
   payeeVpa: string;
   payeeName: string;
   amount: number;
-  reference: string;
-  note: string;
   currency?: string;
 }): string {
   return `upi://pay?${upiQuery(params)}`;
 }
 
 /**
- * A short human-quotable reference, e.g. `HF1A2B3C4DWXYZ`. It travels in the
- * UPI note, so the owner can match a credit in their bank statement back to a
- * row in the dashboard.
+ * A short human-quotable reference, e.g. `HF1A2B3C4DWXYZ`. It identifies the
+ * request on screen, in Firestore and to support. It is deliberately NOT put
+ * into the UPI intent — see `upiQuery` — so it never reaches the bank
+ * statement.
  */
 export function makeReference(): string {
   const stamp = Date.now().toString(36).toUpperCase();
@@ -104,8 +103,6 @@ export function buildAppUpiUri(
     payeeVpa: string;
     payeeName: string;
     amount: number;
-    reference: string;
-    note: string;
   },
   app: UpiApp,
 ): string {
