@@ -22,6 +22,18 @@
  * Built by hand rather than with `URLSearchParams`, which would percent-encode
  * the `@` in the VPA. Several UPI apps reject that, so `pa` is written
  * literally and only the free-text fields are encoded.
+ *
+ * No `tr`. That field is a *merchant* transaction reference, and sending it
+ * makes the intent look like a merchant collection — which the app then tries
+ * to validate against a merchant code and a signature that a plain personal
+ * VPA does not have. PhonePe answers that by refusing the payment outright.
+ * Dropping it leaves an ordinary person-to-person transfer, which is what this
+ * actually is.
+ *
+ * The reference therefore rides in `tn`, the free-text note, where it still
+ * reaches the owner's bank narration and can be matched to a dashboard row.
+ * UPI notes are short, so the reference goes first and the description takes
+ * whatever room is left.
  */
 function upiQuery(params: {
   payeeVpa: string;
@@ -31,13 +43,14 @@ function upiQuery(params: {
   note: string;
   currency?: string;
 }): string {
+  const note = `${params.reference} ${params.note}`.slice(0, 50);
+
   return [
     `pa=${params.payeeVpa}`,
     `pn=${encodeURIComponent(params.payeeName)}`,
     `am=${params.amount.toFixed(2)}`,
     `cu=${params.currency ?? 'INR'}`,
-    `tr=${params.reference}`,
-    `tn=${encodeURIComponent(params.note.slice(0, 50))}`,
+    `tn=${encodeURIComponent(note)}`,
   ].join('&');
 }
 
